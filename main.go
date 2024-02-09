@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,34 +15,42 @@ import (
 )
 
 const (
-	mapKeyKubeAPIServer = "kube-apiserver"
-	mapKeyKubeScheduler = "kube-scheduler"
+	mapKeyKubeAPIServer         = "kube-apiserver"
+	mapKeyKubeScheduler         = "kube-scheduler"
+	mapKeyKubeControllerManager = "kube-controller-manager"
+	mapKeyKubeProxy             = "kube-proxy"
 )
 
 func main() {
 	ctx := context.Background()
+	fs := setupFlagSet()
+	err := fs.Parse(os.Args[1:])
+	if err != nil {
+		panic(err)
+	}
+
 	kubeconfigFilePath := os.Getenv("KUBECONFIG")
 	if kubeconfigFilePath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			panic(err.Error())
+			panic(err)
 		}
 		kubeconfigFilePath = filepath.Join(home, ".kube", "config")
 	}
 
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigFilePath)
 	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
 
 	pods, err := clientset.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
 
 	podMap := constructSystemComponentPodsMap(pods)
@@ -68,13 +77,16 @@ func main() {
 			}
 		}
 	}
+
 }
 
 // constructSystemComponentPodsMap はシステムコンポーネントごとにPodリストを構築する
 func constructSystemComponentPodsMap(pods *corev1.PodList) map[string][]corev1.Pod {
 	m := map[string][]corev1.Pod{
-		mapKeyKubeAPIServer: {},
-		mapKeyKubeScheduler: {},
+		mapKeyKubeAPIServer:         {},
+		mapKeyKubeScheduler:         {},
+		mapKeyKubeControllerManager: {},
+		mapKeyKubeProxy:             {},
 	}
 
 	for _, p := range pods.Items {
@@ -84,7 +96,14 @@ func constructSystemComponentPodsMap(pods *corev1.PodList) map[string][]corev1.P
 		if strings.Contains(p.Name, mapKeyKubeScheduler) {
 			m[mapKeyKubeScheduler] = append(m[mapKeyKubeScheduler], p)
 		}
+		if strings.Contains(p.Name, mapKeyKubeControllerManager) {
+			m[mapKeyKubeControllerManager] = append(m[mapKeyKubeControllerManager], p)
+		}
+		if strings.Contains(p.Name, mapKeyKubeProxy) {
+			m[mapKeyKubeProxy] = append(m[mapKeyKubeProxy], p)
+		}
 	}
+
 	return m
 }
 
@@ -114,4 +133,10 @@ func parseFeatureGatesValue(rawFeatureGates string) map[string]string {
 	}
 
 	return m
+}
+
+func setupFlagSet() *flag.FlagSet {
+	fs := flag.NewFlagSet("FlagSet", flag.ContinueOnError)
+
+	return fs
 }
