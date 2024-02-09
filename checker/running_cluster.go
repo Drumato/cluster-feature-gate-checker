@@ -1,17 +1,13 @@
-package main
+package checker
 
 import (
 	"context"
 	"flag"
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -21,63 +17,68 @@ const (
 	mapKeyKubeProxy             = "kube-proxy"
 )
 
-func main() {
-	ctx := context.Background()
-	fs := setupFlagSet()
-	err := fs.Parse(os.Args[1:])
-	if err != nil {
-		panic(err)
-	}
+type SystemComponentFeatureGateMartix map[string][]SystemComponentPod
 
-	kubeconfigFilePath := os.Getenv("KUBECONFIG")
-	if kubeconfigFilePath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			panic(err)
-		}
-		kubeconfigFilePath = filepath.Join(home, ".kube", "config")
-	}
+type SystemComponentPod struct {
+	Name       string
+	Containers []SystemComponentContainer
+}
 
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigFilePath)
-	if err != nil {
-		panic(err)
-	}
+type SystemComponentContainer struct {
+	Name         string
+	FeatureGates []FeatureGateConfig
+}
 
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		panic(err)
-	}
+type FeatureGateConfig struct {
+	FeatureGateKey   string
+	FeatureGateValue string
+}
+
+// CollectRunningClusterFeatureGates はKubernetesクラスタからシステムコンポーネントの情報を取ってきて、Feature Gateの設定を解析する
+// 返り値となるMatrixは、 {"kube-apiserver": [{"feature-gate-001": "true"}, {}]}のようになる
+func CollectRunningClusterFeatureGates(ctx context.Context, clientset *kubernetes.Clientset) (SystemComponentFeatureGateMartix, error) {
+	m := make(map[string][]SystemComponentPod)
 
 	pods, err := clientset.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		panic(err)
+		return m, err
 	}
 
 	podMap := constructSystemComponentPodsMap(pods)
 
-	fmt.Println("===== k8s running cluster feature gate checker =====")
-
 	for componentName, pods := range podMap {
-		fmt.Printf("### %s\n", componentName)
+		podConfigs := make([]SystemComponentPod, len(pods))
 
-		for _, p := range pods {
-			for _, c := range p.Spec.Containers {
+		for podIdx, p := range pods {
+			containers := make([]SystemComponentContainer, len(p.Spec.Containers))
+			for containerIdx, c := range p.Spec.Containers {
+				containers[containerIdx].Name = c.Name
 				featureGates, found := findFeatureGatesFlagInContainerArgs(c.Args)
 				if !found {
-					fmt.Printf("    %s/%s: No Feature Gates Found\n", p.Name, c.Name)
 					continue
 				}
 
 				featureGateKVPairs := parseFeatureGatesValue(featureGates)
-				fmt.Printf("    %s/%s:\n", p.Name, c.Name)
+				containers[containerIdx].FeatureGates = make([]FeatureGateConfig, len(featureGateKVPairs))
 
+				featureGateCount := 0
 				for k, v := range featureGateKVPairs {
-					fmt.Printf("        %s: %s\n", k, v)
+					containers[containerIdx].FeatureGates[featureGateCount] = FeatureGateConfig{
+						FeatureGateKey:   k,
+						FeatureGateValue: v,
+					}
 				}
 			}
-		}
-	}
 
+			podConfigs[podIdx] = SystemComponentPod{
+				Name:       p.Name,
+				Containers: containers,
+			}
+		}
+
+		m[componentName] = podConfigs
+	}
+	return m, nil
 }
 
 // constructSystemComponentPodsMap はシステムコンポーネントごとにPodリストを構築する
