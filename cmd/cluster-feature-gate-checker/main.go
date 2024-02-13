@@ -47,18 +47,18 @@ func main() {
 		for _, p := range pods {
 			for _, c := range p.Containers {
 				if len(c.FeatureGates) == 0 {
-					fmt.Printf("%s/%s: No Feature Gates Found\n", p.Name, c.Name)
+					fmt.Printf("    %s/%s: No Feature Gates Found\n", p.Name, c.Name)
 					continue
 				}
 
 				fmt.Printf("    %s/%s:\n", p.Name, c.Name)
-				for k, v := range c.FeatureGates {
-					fmt.Printf("        %s: %s\n", k, v)
+				for _, fg := range c.FeatureGates {
+					fmt.Printf("        %s: %s\n", fg.FeatureGateKey, fg.FeatureGateValue)
 				}
 			}
 		}
 
-		fmt.Println("\n")
+		fmt.Println("")
 	}
 
 }
